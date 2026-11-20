@@ -32,10 +32,16 @@ final class AppState: ObservableObject {
 
     private var notificationTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
-    private let initialRepositoryID: Int64?
+    /// DEBUG 夹具模式下不发起网络请求，避免截图被限流横幅干扰。
+    private let fixtureMode: Bool
 
     init(container suppliedContainer: ModelContainer? = nil, storageError: String? = nil) {
         AppSettings.registerDefaults()
+        #if DEBUG
+        fixtureMode = DebugFixtures.isEnabled
+        #else
+        fixtureMode = false
+        #endif
         downloadManager = DownloadManager.shared
 
         let resolvedContainer: ModelContainer
@@ -52,7 +58,15 @@ final class AppState: ObservableObject {
         self.storageError = resolvedError
 
         if suppliedContainer == nil {
+            #if DEBUG
+            if DebugFixtures.isEnabled {
+                DebugFixtures.populate(context: resolvedContainer.mainContext)
+            } else {
+                DefaultRepository.seedIfNeeded(context: resolvedContainer.mainContext)
+            }
+            #else
             DefaultRepository.seedIfNeeded(context: resolvedContainer.mainContext)
+            #endif
         }
 
         let notificationService = NotificationService()
@@ -63,8 +77,28 @@ final class AppState: ObservableObject {
         backgroundRefresh.attach(syncService: syncService)
 
         let repositories = (try? syncService.fetchRepositories()) ?? []
-        initialRepositoryID = repositories.count == 1 ? repositories.first?.id : nil
-        selectedRepositoryID = initialRepositoryID
+        var initialID: Int64? = repositories.count == 1 ? repositories.first?.id : nil
+        var initialTab: RootTab = .repositories
+        #if DEBUG
+        if fixtureMode {
+            // 夹具模式下直接进详情页 / 指定 Tab，方便逐屏截图验收。
+            initialID = repositories.first?.id
+            if let name = DebugFixtures.openRepositoryName,
+               let target = repositories.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                initialID = target.id
+            }
+            if let tab = DebugFixtures.initialTabName {
+                initialTab = tab == "settings" ? .settings : (tab == "downloads" ? .downloads : .repositories)
+            }
+        }
+        #endif
+        selectedRepositoryID = initialID
+        selectedTab = initialTab
+        #if DEBUG
+        if fixtureMode, initialTab == .repositories, DebugFixtures.openRepositoryName != nil, let initialID {
+            repositoryPath = [initialID]
+        }
+        #endif
         unreadCount = syncService.unreadCount()
         observeNotificationClicks()
         applyBadge()
@@ -74,6 +108,7 @@ final class AppState: ObservableObject {
 
     func onAppear() {
         scheduler.start()
+        guard !fixtureMode else { return }
         Task {
             await scheduler.checkIfNeeded()
             updateUnreadCount()
@@ -85,6 +120,7 @@ final class AppState: ObservableObject {
         case .active:
             scheduler.start()
             downloadManager.refreshTasksFromSession()
+            guard !fixtureMode else { return }
             Task {
                 await scheduler.checkIfNeeded()
                 updateUnreadCount()

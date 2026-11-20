@@ -4,6 +4,8 @@ struct RepositoryRow: View {
     let repository: Repository
     let latestRelease: Release?
     let hasIPA: Bool
+    /// iPad 分栏下被选中的行：用作色调整，避免蓝色选中背景上出现低对比的浅蓝徽标。
+    var isEmphasized = false
 
     private var isUnread: Bool {
         guard let latestRelease else { return false }
@@ -18,37 +20,41 @@ struct RepositoryRow: View {
                 HStack(spacing: 6) {
                     Text(repository.name)
                         .font(AppTypography.itemTitle)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(isEmphasized ? Color.white : Color.primary)
                         .lineLimit(1)
                     if isUnread {
                         Circle()
-                            .fill(AppColors.accent)
+                            .fill(isEmphasized ? Color.white : AppColors.accent)
                             .frame(width: 7, height: 7)
                             .accessibilityLabel("有未读更新")
                     }
                     if repository.isArchived {
-                        StatusPill(text: "已归档")
+                        StatusPill(text: "已归档", color: isEmphasized ? .white : AppColors.secondary)
                     }
                 }
 
                 Text(repository.fullName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isEmphasized ? Color.white.opacity(0.85) : Color.secondary)
                     .lineLimit(1)
 
                 HStack(spacing: 6) {
                     if let latestRelease {
-                        StatusPill(text: latestRelease.tagName, color: AppColors.accent, systemImage: "tag")
+                        StatusPill(
+                            text: latestRelease.tagName,
+                            color: isEmphasized ? .white : AppColors.accent,
+                            systemImage: "tag"
+                        )
                         if hasIPA {
                             KindBadge(kind: .ipa)
                         }
                         Text(AppFormatters.relativeDate(latestRelease.sortDate))
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(isEmphasized ? Color.white.opacity(0.8) : Color.secondary.opacity(0.8))
                     } else {
                         Text(repository.lastCheckedAt == nil ? "尚未检查" : "暂无 Release")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(isEmphasized ? Color.white.opacity(0.8) : Color.secondary.opacity(0.8))
                     }
                 }
             }
@@ -58,7 +64,7 @@ struct RepositoryRow: View {
             if repository.lastError != nil {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(AppColors.warning)
+                    .foregroundStyle(isEmphasized ? Color.white : AppColors.warning)
                     .accessibilityLabel("同步失败")
             }
         }

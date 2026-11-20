@@ -168,7 +168,13 @@ struct RepositoryListView: View {
     private func row(for repository: Repository) -> some View {
         let release = try? syncService.latestRelease(for: repository)
         let hasIPA = release.map { syncService.hasIPA(release: $0) } ?? false
-        let row = RepositoryRow(repository: repository, latestRelease: release, hasIPA: hasIPA)
+        let isSelected = isSidebar && appState.selectedRepositoryID == repository.id
+        let row = RepositoryRow(
+            repository: repository,
+            latestRelease: release,
+            hasIPA: hasIPA,
+            isEmphasized: isSelected
+        )
 
         if isSidebar {
             row.tag(repository.id)

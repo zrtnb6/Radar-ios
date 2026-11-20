@@ -51,8 +51,11 @@ final class DownloadManager: ObservableObject {
     let downloadsDirectory: URL
 
     private let session: URLSession
+    private let fallbackSession: URLSession
     private let delegate: DownloadSessionDelegate
     private var destinations: [Int64: URL] = [:]
+    /// 后台会话不可用时（例如未签名的开发包）已经切到前台会话的附件 id，避免反复切换。
+    private var fallbackUsed: Set<Int64> = []
     private var pendingBackgroundCompletion: (() -> Void)?
     private let logger = Logger(subsystem: "com.releaseradar.ios", category: "Download")
     private let store = DownloadStore()
@@ -78,6 +81,7 @@ final class DownloadManager: ObservableObject {
         let downloadDelegate = DownloadSessionDelegate()
         self.delegate = downloadDelegate
         self.session = URLSession(configuration: resolvedConfiguration, delegate: downloadDelegate, delegateQueue: nil)
+        self.fallbackSession = URLSession(configuration: Self.foregroundConfiguration(), delegate: downloadDelegate, delegateQueue: nil)
 
         downloadDelegate.onProgress = { [weak self] id, written, expected in
             Task { @MainActor in self?.recordProgress(id: id, received: written, expected: expected) }
@@ -85,8 +89,8 @@ final class DownloadManager: ObservableObject {
         downloadDelegate.onFinish = { [weak self] id, url in
             Task { @MainActor in self?.finish(id: id, localURL: url) }
         }
-        downloadDelegate.onFailure = { [weak self] id, message in
-            Task { @MainActor in self?.fail(id: id, message: message) }
+        downloadDelegate.onFailure = { [weak self] id, message, code in
+            Task { @MainActor in self?.fail(id: id, message: message, code: code) }
         }
         downloadDelegate.onCancelled = { [weak self] id in
             Task { @MainActor in self?.markCancelled(id: id) }
@@ -109,6 +113,17 @@ final class DownloadManager: ObservableObject {
         let configuration = URLSessionConfiguration.background(withIdentifier: backgroundSessionIdentifier)
         configuration.sessionSendsLaunchEvents = true
         configuration.isDiscretionary = false
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 60 * 60
+        configuration.httpMaximumConnectionsPerHost = 3
+        return configuration
+    }
+
+    /// 后台会话依赖系统后台传输守护进程。未签名 / 调试环境下它可能连不上，
+    /// 这时用前台会话兜底，保证下载仍然可用（代价是切后台会被挂起）。
+    private static func foregroundConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = true
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 60 * 60
@@ -152,7 +167,7 @@ final class DownloadManager: ObservableObject {
         delegate.setDestination(destination, for: id)
         destinations[id] = destination
         store.saveDestination(fileName: destination.lastPathComponent, assetID: id)
-        store.saveActive(id: id, name: fileName, kind: asset.kind, total: asset.size)
+        store.saveActive(id: id, name: fileName, kind: asset.kind, total: asset.size, url: url, downloadURL: asset.downloadURL)
 
         var item = DownloadItem(id: id, assetName: fileName, kind: asset.kind, startedAt: Date())
         if asset.size > 0 { item.totalBytes = asset.size }
@@ -170,9 +185,19 @@ final class DownloadManager: ObservableObject {
     }
 
     func cancel(id: Int64) {
-        session.getAllTasks { [weak self] tasks in
-            tasks.first { $0.taskDescription == String(id) }?.cancel()
+        let description = String(id)
+        let markCancelled = { [weak self] in
             Task { @MainActor in self?.markCancelled(id: id) }
+        }
+        session.getAllTasks { tasks in
+            if let task = tasks.first(where: { $0.taskDescription == description }) {
+                task.cancel()
+            } else {
+                markCancelled()
+            }
+        }
+        fallbackSession.getAllTasks { tasks in
+            tasks.first { $0.taskDescription == description }?.cancel()
         }
     }
 
@@ -285,13 +310,51 @@ final class DownloadManager: ObservableObject {
         logger.info("Download finished: \(item.assetName, privacy: .public)")
     }
 
-    private func fail(id: Int64, message: String) {
+    private func fail(id: Int64, message: String, code: Int?) {
         guard var item = items[id], item.state == .downloading else { return }
+
+        // 后台会话依赖系统守护进程：未签名的开发包、模拟器或进程被强制回收时可能直接失败。
+        // 这种情况自动降级到前台会话再试一次，避免「点了下载却什么都没发生」。
+        if let code, Self.backgroundSessionFailureCodes.contains(code),
+           !fallbackUsed.contains(id),
+           let record = store.record(for: id),
+           let url = try? DownloadPolicy.validatedURL(record.downloadURL) {
+            fallbackUsed.insert(id)
+            logger.notice("后台会话不可用（\(code)），改用前台会话重试")
+            startForegroundTask(id: id, url: url, item: item)
+            return
+        }
+
         item.state = .failed
         item.errorMessage = message
         items[id] = item
         store.remove(id: id)
         logger.error("Download failed: \(message, privacy: .public)")
+    }
+
+    private static let backgroundSessionFailureCodes: Set<Int> = [
+        NSURLErrorUnknown,
+        NSURLErrorBackgroundSessionWasDisconnected,
+        NSURLErrorBackgroundSessionInUseByAnotherProcess
+    ]
+
+    private func startForegroundTask(id: Int64, url: URL, item: DownloadItem) {
+        guard let destination = destinations[id] else {
+            var failed = item
+            failed.state = .failed
+            failed.errorMessage = "无法确定保存位置"
+            items[id] = failed
+            return
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        request.setValue("Radar-iOS/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+
+        let task = fallbackSession.downloadTask(with: request)
+        task.taskDescription = String(id)
+        delegate.setDestination(destination, for: id)
+        items[id] = item
+        task.resume()
     }
 
     private func markCancelled(id: Int64) {
@@ -310,6 +373,8 @@ private struct DownloadStore {
         let kindRaw: String
         let total: Int64
         let startedAt: Date
+        /// 原始直链，后台会话不可用时用它在当前会话里重试。
+        let downloadURL: String
 
         var kind: AssetKind { AssetKind(rawValue: kindRaw) ?? .other }
     }
@@ -328,9 +393,16 @@ private struct DownloadStore {
         activeRecords().first { $0.id == id }
     }
 
-    func saveActive(id: Int64, name: String, kind: AssetKind, total: Int64) {
+    func saveActive(id: Int64, name: String, kind: AssetKind, total: Int64, url: URL, downloadURL: String) {
         var records = activeRecords().filter { $0.id != id }
-        records.append(Record(id: id, name: name, kindRaw: kind.rawValue, total: total, startedAt: .now))
+        records.append(Record(
+            id: id,
+            name: name,
+            kindRaw: kind.rawValue,
+            total: total,
+            startedAt: .now,
+            downloadURL: downloadURL.isEmpty ? url.absoluteString : downloadURL
+        ))
         if let data = try? JSONEncoder().encode(records) { defaults.set(data, forKey: activeKey) }
     }
 
@@ -361,7 +433,7 @@ private final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegat
 
     var onProgress: ((Int64, Int64, Int64) -> Void)?
     var onFinish: ((Int64, URL) -> Void)?
-    var onFailure: ((Int64, String) -> Void)?
+    var onFailure: ((Int64, String, Int?) -> Void)?
     var onCancelled: ((Int64) -> Void)?
     var onBackgroundEventsFinished: (() -> Void)?
 
@@ -401,11 +473,11 @@ private final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegat
         guard let id = assetID(for: downloadTask) else { return }
         if let http = downloadTask.response as? HTTPURLResponse,
            !(200...299).contains(http.statusCode) {
-            onFailure?(id, "服务器返回 \(http.statusCode)")
+            onFailure?(id, "服务器返回 \(http.statusCode)", nil)
             return
         }
         guard let destination = destination(for: id) else {
-            onFailure?(id, "无法确定保存位置")
+            onFailure?(id, "无法确定保存位置", nil)
             return
         }
         do {
@@ -413,7 +485,7 @@ private final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegat
             try FileManager.default.moveItem(at: location, to: destination)
             onFinish?(id, destination)
         } catch {
-            onFailure?(id, "保存文件失败：\(error.localizedDescription)")
+            onFailure?(id, "保存文件失败：\(error.localizedDescription)", nil)
         }
     }
 
@@ -421,7 +493,7 @@ private final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegat
         guard let id = assetID(for: task) else { return }
         if let http = task.response as? HTTPURLResponse,
            !(200...299).contains(http.statusCode) {
-            onFailure?(id, "服务器返回 \(http.statusCode)")
+            onFailure?(id, "服务器返回 \(http.statusCode)", nil)
             return
         }
         guard let error else { return }
@@ -429,7 +501,7 @@ private final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegat
         if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
             onCancelled?(id)
         } else {
-            onFailure?(id, error.localizedDescription)
+            onFailure?(id, error.localizedDescription, nsError.domain == NSURLErrorDomain ? nsError.code : nil)
         }
     }
 

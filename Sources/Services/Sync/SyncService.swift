@@ -96,6 +96,7 @@ final class SyncService: ObservableObject {
             guard !repositories.isEmpty else { return }
 
             var pendingNotifications: [PendingNotification] = []
+            var failureCount = 0
             let client = self.client
             // 移动网络下控制并发：每批 3 个仓库，单仓库失败只影响自己。
             for start in stride(from: 0, to: repositories.count, by: 3) {
@@ -128,6 +129,7 @@ final class SyncService: ObservableObject {
                     let isFirstCheck = repository.lastCheckedAt == nil
                     repository.lastCheckedAt = .now
                     if let failure = result.failure {
+                        failureCount += 1
                         repository.lastError = failure.message
                         lastSyncError = failure.message
                         if let retryAt = failure.retryAt {
@@ -143,7 +145,10 @@ final class SyncService: ObservableObject {
             }
 
             try modelContext.save()
-            lastSuccessAt = .now
+            // 只有全部仓库都成功才更新「上次成功检查」，失败时保留上一次的真实时间。
+            if failureCount == 0 {
+                lastSuccessAt = .now
+            }
 
             for pending in pendingNotifications {
                 let delivered: Bool

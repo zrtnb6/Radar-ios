@@ -13,6 +13,7 @@ Radar macOS 版盯的是 DMG，iOS 版盯的是 **IPA**：附件类型判定、�
 
 ## 目录
 
+- [截图](#截图)
 - [与 macOS 版的差异](#与-macos-版的差异)
 - [功能特性](#功能特性)
 - [IPA 识别规则](#ipa-识别规则)
@@ -25,6 +26,17 @@ Radar macOS 版盯的是 DMG，iOS 版盯的是 **IPA**：附件类型判定、�
 - [隐私与安全](#隐私与安全)
 - [已知限制](#已知限制)
 - [许可证](#许可证)
+
+## 截图
+
+iPhone 项目列表与详情（截图使用内置夹具数据）：
+
+<img src="Documentation/screenshots/radar-list.png" width="300" alt="项目列表">
+<img src="Documentation/screenshots/radar-detail.png" width="300" alt="版本详情">
+
+iPad 与横屏自动变成「列表 + 详情」分栏：
+
+<img src="Documentation/screenshots/radar-ipad.png" width="620" alt="iPad 分栏">
 
 ## 与 macOS 版的差异
 
@@ -69,7 +81,7 @@ Release 里一个 IPA 都没有时，详情页会明确写「该版本没有 IPA
 
 ## 安装
 
-仓库内已附带构建好的未签名包：[`dist/Radar-ios-1.0.0-unsigned.ipa`](dist/Radar-ios-1.0.0-unsigned.ipa)（652 KB，`arm64`，iOS 17.0+）。
+仓库内已附带构建好的未签名包：[`dist/Radar-ios-1.0.0-unsigned.ipa`](dist/Radar-ios-1.0.0-unsigned.ipa)（656 KB / 668,320 字节，`arm64`，iOS 17.0+）。
 
 未签名 IPA 不能直接双击安装，需要侧载工具用你自己的证书重签：
 
@@ -90,6 +102,7 @@ Release 里一个 IPA 都没有时，详情页会明确写「该版本没有 IPA
 | 后台唤醒 | `BGAppRefreshTask` 执行一次全量刷新，完成/超时都保证只回调一次 `setTaskCompleted` |
 | 回到前台 | 重新启动轮询、恢复后台下载任务状态、补一次检查、同步图标角标 |
 | 下载中切后台 | 走 background URLSession（`sessionSendsLaunchEvents`），系统接管传输；进程被回收后重新启动仍能从 UserDefaults 恢复「下载中」列表与目标文件名 |
+| 后台会话不可用 | 后台传输守护进程连不上（未签名的开发包、模拟器）时自动降级到前台会话重试一次，仍失败才报错，不会「点了下载没反应」 |
 | 下载完成 | 文件同步落到 `Documents/Downloads`；下载器的 `didFinishDownloadingTo` 里完成移动，避免临时文件被系统清掉 |
 | 通知点按 | `NotificationService` 广播 → `AppState` 切到「项目」Tab、推进导航栈、定位 Release、清未读 |
 | 大字体 / 横屏 | 全部使用动态字体与自适应布局；iPhone 竖屏单列，iPad 与横屏走 `NavigationSplitView` |
@@ -106,7 +119,7 @@ Release 里一个 IPA 都没有时，详情页会明确写「该版本没有 IPA
 | 更新判断 | Release ID / Tag / 发布时间 / Prerelease→正式；仅改 Notes 不算新版本 |
 | 通知去重 | 持久化 `NotificationEvent`，同一 Release 只建一次事件 |
 | 并发控制 | 每批 3 个仓库并发，失败隔离 |
-| 下载策略 | 只接受 `https://github.com` 直链，拒绝内嵌账号、控制字符与路径穿越 |
+| 下载策略 | 只接受 `https://github.com` 直链，拒绝内嵌账号、控制字符与路径穿越；后台会话不可用时降级到前台会话 |
 | 后台任务 | `BGAppRefreshTask` + `TaskCompletionGuard`（NSLock 保证只完成一次） |
 | 状态管理 | `AppState`（导航 / 角标 / Toast）+ `SyncService`（拉取与落库）+ `DownloadManager`（下载与分享） |
 
@@ -162,6 +175,16 @@ swiftc -O Documentation/GenerateIcon.swift -o /tmp/genicon
 /tmp/genicon Resources/Assets.xcassets/AppIcon.appiconset/icon_1024.png
 ```
 
+### 用夹具跑界面
+
+DEBUG 构建内置了一套夹具数据，不消耗 GitHub 配额也能检查列表、详情、IPA 附件与设置的排版：
+
+```bash
+xcrun simctl launch <device-udid> com.releaseradar.ios --ui-fixtures            # 列表
+xcrun simctl launch <device-udid> com.releaseradar.ios --ui-fixtures --ui-open=Orbit      # 指定仓库详情
+xcrun simctl launch <device-udid> com.releaseradar.ios --ui-fixtures --ui-tab=settings    # 设置
+```
+
 ## GitHub Actions（可选）
 
 `.github/workflows/build-ipa.yml` 支持两种触发：手动 `workflow_dispatch`，或推 `v*` tag（构建完自动附到 Release）。用的也是 `Scripts/build-ipa.sh`，产物通过 `actions/upload-artifact` 里的 `*.ipa` 交付，本地有 Xcode 时优先本地构建即可。
@@ -178,6 +201,7 @@ swiftc -O Documentation/GenerateIcon.swift -o /tmp/genicon
 
 - 未附带自动化测试 target；仓库 URL 解析、下载策略、附件判定沿用 macOS 版已通过 47 项测试的实现，iOS 侧靠编译期检查与真机手测
 - 未签名 IPA 需要自行侧载重签，证书 7 天 / 1 年到期后要重装
+- 直接跑未签名开发包时，后台下载会降级为前台会话（切后台可能被挂起）；用 AltStore 等工具重签安装后后台下载正常
 - 后台刷新由系统调度，最早约 15 分钟后执行，实际时机取决于电量、使用频率与低电量模式
 - 每个仓库最多缓存最近 30 个 Release，历史区展示全部已缓存版本，未做分页「加载更多」
 - 私有仓库需自备 Fine-grained PAT（`Contents` / `Metadata` 读权限），未实现 OAuth 设备流登录
