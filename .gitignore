@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+.build/
+.build-device/
+.build-icon/
+dist/Payload/
+*.xcarchive
+*.xcresult
+xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# 归档产物只保留最终 IPA
+dist/*.ipa.tmp
