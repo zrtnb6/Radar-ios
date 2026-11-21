@@ -8,6 +8,7 @@ Radar macOS 版盯的是 DMG，iOS 版盯的是 **IPA**：附件类型判定、�
 ![SwiftUI](https://img.shields.io/badge/Swift-SwiftUI%20·%20SwiftData-F05138?logo=swift&logoColor=white)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![Download IPA](https://img.shields.io/badge/download-IPA%20653%20KB-2ea44f?logo=apple&logoColor=white)](https://github.com/zrtnb6/Radar-ios/releases/latest)
 
 ---
 
@@ -81,7 +82,21 @@ Release 里一个 IPA 都没有时，详情页会明确写「该版本没有 IPA
 
 ## 安装
 
-仓库内已附带构建好的未签名包：[`dist/Radar-ios-1.0.0-unsigned.ipa`](dist/Radar-ios-1.0.0-unsigned.ipa)（656 KB / 668,320 字节，`arm64`，iOS 17.0+）。
+上 [Releases](https://github.com/zrtnb6/Radar-ios/releases/latest) 下最新 IPA：
+
+```
+https://github.com/zrtnb6/Radar-ios/releases/download/v1.0.0/Radar-ios-1.0.0-unsigned.ipa
+```
+
+| 项 | 值 |
+| --- | --- |
+| 体积 | 653 KB（668,320 字节） |
+| 架构 | `arm64`（真机） |
+| 最低系统 | iOS 17.0 |
+| Bundle ID | `com.releaseradar.ios` |
+| 签名 | 无 |
+
+仓库内也留了一份构建产物：[`dist/Radar-ios-1.0.0-unsigned.ipa`](dist/Radar-ios-1.0.0-unsigned.ipa)，与 Release 资产同一文件。
 
 未签名 IPA 不能直接双击安装，需要侧载工具用你自己的证书重签：
 
