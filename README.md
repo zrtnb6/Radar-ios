@@ -2,7 +2,7 @@
 
 **Radar 的 iOS 客户端** —— 原生 SwiftUI GitHub Release 监控 App，把「有没有新版本、有没有 IPA」这件事放到手机上。
 
-Radar macOS 版盯的是 DMG，iOS 版盯的是 **IPA**：附件类型判定、排序、下载、分享、通知文案、筛选开关，全部围绕 `.ipa` 重新做了一遍。
+Radar macOS 版的孪生兄弟，专门监控 **IPA** 。
 
 ![iOS](https://img.shields.io/badge/iOS-17.0%2B-black?logo=apple&logoColor=white)
 ![SwiftUI](https://img.shields.io/badge/Swift-SwiftUI%20·%20SwiftData-F05138?logo=swift&logoColor=white)
